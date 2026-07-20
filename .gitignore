@@ -1,0 +1,9 @@
+# API key (ZAI_API_KEY, ELEVENLABS_API_KEY) — KHÔNG BAO GIỜ commit
+.secrets.json
+
+# Device identity CapCut: sinh ngẫu nhiên theo máy, chia sẻ ra là dính shark block chéo
+.cache/
+
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "segments": [
+    {
+      "id": "seg-000",
+      "order": 0,
+      "narration": "Lời kể ngôi ba đủ dài.",
+      "shot_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "seg-001",
+      "order": 1,
+      "narration": "Lời kể ngôi ba đủ dài.",
+      "shot_indices": [
+        1,
+        2
+      ]
+    }
+  ]
+}

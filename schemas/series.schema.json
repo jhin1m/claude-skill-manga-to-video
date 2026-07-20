@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manga-to-video/series.schema.json",
+  "title": "series.json — index series-memory trong <series>/.mtv/ (xem references/series.md)",
+  "type": "object",
+  "required": ["version", "series_title", "chapters"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "series_title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tên bộ truyện — orchestrator hỏi user lần đầu khởi tạo series"
+    },
+    "chapters": {
+      "type": "array",
+      "description": "Chương đã xử lý xong, theo thứ tự hoàn thành",
+      "items": {
+        "type": "object",
+        "required": ["slug", "status", "completed_at", "context_recaps_used"],
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\\\]+$",
+            "description": "Tên thư mục chương (vd 'chapter-1.1') — khớp summaries/<slug>.md và workdirs/<slug>/"
+          },
+          "status": { "enum": ["done"] },
+          "completed_at": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ISO 8601 thời điểm chương pass nghiệm thu"
+          },
+          "context_recaps_used": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Slug các chương mà recap đã được dùng làm context khi chạy chương này — phục vụ stale warning khi re-run chương cũ"
+          }
+        }
+      }
+    }
+  }
+}

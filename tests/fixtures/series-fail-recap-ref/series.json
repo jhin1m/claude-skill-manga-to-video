@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "series_title": "Bộ Test",
+  "chapters": [
+    {
+      "slug": "chapter-1.1",
+      "status": "done",
+      "completed_at": "2026-07-19T00:00:00Z",
+      "context_recaps_used": []
+    },
+    {
+      "slug": "chapter-1.2",
+      "status": "done",
+      "completed_at": "2026-07-19T00:00:00Z",
+      "context_recaps_used": [
+        "chapter-99"
+      ]
+    }
+  ]
+}

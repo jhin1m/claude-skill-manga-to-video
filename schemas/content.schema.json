@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manga-to-video/content.schema.json",
+  "title": "SceneContent per slice (port content-extractor/lib/schema.ts:4-8)",
+  "type": "object",
+  "required": ["slice_id", "description", "dialogue", "note"],
+  "additionalProperties": false,
+  "properties": {
+    "slice_id": {
+      "type": "string",
+      "pattern": "^[0-9]{3}$",
+      "description": "ID slice dạng NNN (000, 001, ...) — khớp tên file slices/NNN.png"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Mô tả khung hình ngôi ba khách quan — không được rỗng"
+    },
+    "dialogue": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Thoại dịch tiếng Việt theo thứ tự đọc (có thể rỗng)"
+    },
+    "note": {
+      "type": "string",
+      "description": "SFX / chuyển cảnh / ảnh mờ — feed vào bước viết kịch bản"
+    }
+  }
+}
