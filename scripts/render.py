@@ -3,10 +3,12 @@
 # 2 nơi khi fix bug. Luồng: đọc script + audio-manifest → buildTimeline → SRT/timeline.json
 # → render từng shot (Ken Burns) → concat → audio track (adelay theo start+padHead) →
 # BGM duck → burn subs → mux → out/video.mp4.
-# Hợp đồng skill v1: shots full-slice, region null, motion auto (agent không chỉ định).
+# Hợp đồng skill: shots full-slice → split_tall → auto-region né bubble (tắt bằng --no-auto-region).
+# motion auto; agent không chỉ định region trong script.json.
 #
 # CLI: render.py --workdir W --aspect 9:16|16:9|1:1 [--fps 30] [--zoom 1.12] [--bgm FILE]
 #                [--bgm-volume 0.3] [--duck-db -12] [--subs srt|burn|both] [--dry-run]
+#                [--no-auto-region]
 
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ from mtv.ffmpeg_cmd import (
     render_shot_cmd,
     run_command,
 )
+from mtv.auto_region import auto_region_within
 from mtv.kenburns import kenburns
 from mtv.shot_split import split_tall_shots
 from mtv.smart_split import to_gray
@@ -55,21 +58,49 @@ def fail(rule: str, message: str) -> None:
     sys.exit(1)
 
 
-def _slice_gray_loader(workdir: Path, manifest: dict):
-    """gray_of(source_index) cho split_tall_shots — nạp lười, mỗi slice giải mã một lần."""
+def _slice_loaders(workdir: Path, manifest: dict):
+    """gray_of + rgb_of (nạp lười) cho split_tall + auto_region."""
     from PIL import Image  # PIL chỉ cần khi thực sự cắt — import tại chỗ, không nặng CLI
     import numpy as np
 
-    cache: dict[int, object] = {}
+    gray_cache: dict[int, object] = {}
+    rgb_cache: dict[int, object] = {}
 
-    def gray_of(source_index: int):
-        if source_index not in cache:
+    def rgb_of(source_index: int):
+        if source_index not in rgb_cache:
             path = workdir / manifest["slices"][source_index]["file"]
             with Image.open(path) as img:
-                cache[source_index] = to_gray(np.asarray(img.convert("RGB")))
-        return cache[source_index]
+                rgb_cache[source_index] = np.asarray(img.convert("RGB"))
+        return rgb_cache[source_index]
 
-    return gray_of
+    def gray_of(source_index: int):
+        if source_index not in gray_cache:
+            gray_cache[source_index] = to_gray(rgb_of(source_index))
+        return gray_cache[source_index]
+
+    return gray_of, rgb_of
+
+
+def apply_auto_regions(segments: list[dict], rgb_of) -> list[dict]:
+    """Gán region né bubble cho từng shot (trong base region nếu đã có từ split_tall)."""
+    out = []
+    n_set = 0
+    for seg in segments:
+        shots = []
+        for shot in seg["shots"]:
+            rgb = rgb_of(shot["source_index"])
+            if rgb is None:
+                shots.append(shot)
+                continue
+            region = auto_region_within(rgb, shot.get("region"))
+            if region is not None:
+                n_set += 1
+                shots.append({**shot, "region": region})
+            else:
+                shots.append(shot)
+        out.append({**seg, "shots": shots})
+    print(f"[render] auto-region: {n_set} shot có khung né bubble")
+    return out
 
 
 def main() -> None:
@@ -83,6 +114,11 @@ def main() -> None:
     parser.add_argument("--duck-db", type=float, default=-12)
     parser.add_argument("--subs", choices=["srt", "burn", "both"], default="both")
     parser.add_argument("--dry-run", action="store_true", help="in timeline + lệnh ffmpeg, không chạy")
+    parser.add_argument(
+        "--no-auto-region",
+        action="store_true",
+        help="tắt auto-crop né bubble (mặc định BẬT)",
+    )
     args = parser.parse_args()
 
     # validate script trước khi render
@@ -118,7 +154,11 @@ def main() -> None:
     # Band cao hơn trần → cắt thành nhiều shot ngắn tại gutter. Chạy TRƯỚC build_timeline
     # để thời lượng đoạn chia đúng cho số shot sau khi nở. Hợp đồng script.json không đổi:
     # region là chuyện hình ảnh, suy ra từ ảnh chứ không do agent chỉ định.
-    segments = split_tall_shots(segments, _slice_gray_loader(args.workdir, manifest))
+    gray_of, rgb_of = _slice_loaders(args.workdir, manifest)
+    segments = split_tall_shots(segments, gray_of)
+    # Auto-crop né bubble (mặc định bật) — chỉ đổi framing, không sửa pixel slice.
+    if not args.no_auto_region:
+        segments = apply_auto_regions(segments, rgb_of)
     seg_durations = {
         seg_id: info["duration_sec"] for seg_id, info in audio_manifest["segments"].items()
     }

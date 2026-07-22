@@ -145,8 +145,14 @@ Cache theo segment — chạy lại không tốn call. Lỗi `ret=-6` (shark blo
 
 ```bash
 $PY $SCRIPTS/render.py --workdir <W> --aspect 9:16 --subs both
-# 9:16|16:9|1:1; [--fps 30] [--zoom 1.12] [--bgm file.mp3 --bgm-volume 0.3 --duck-db -12]; --dry-run xem lệnh
+# 9:16|16:9|1:1; [--fps 30] [--zoom 1.12] [--bgm file.mp3 --bgm-volume 0.3 --duck-db -12]
+# [--no-auto-region] tắt auto-crop né bubble (mặc định BẬT); --dry-run xem lệnh
 ```
+
+**Auto-region (né bubble) v2.1:** sau `split_tall`, mỗi shot có thể được gán `region`
+heuristic. Manhwa dọc: **giữ full width**, chỉ cắt dọc cửa sổ ít bubble (tối đa ~22%
+chiều cao). Không xoá pixel. Không ổn / muốn full panel: `--no-auto-region`.
+Đồng bộ với app Next (`lib/auto-region.ts`).
 
 ffmpeg thiếu libass → tự bỏ burn-in, vẫn có `.srt` rời (cảnh báo trên stderr, không fail).
 
