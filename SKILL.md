@@ -147,7 +147,26 @@ Cache theo segment — chạy lại không tốn call. Lỗi `ret=-6` (shark blo
 $PY $SCRIPTS/render.py --workdir <W> --aspect 9:16 --subs both
 # 9:16|16:9|1:1; [--fps 30] [--zoom 1.12] [--bgm file.mp3 --bgm-volume 0.3 --duck-db -12]
 # [--no-auto-region] tắt auto-crop né bubble (mặc định BẬT); --dry-run xem lệnh
+# [--subs-style '<json>'] style phụ đề; [--subs-fonts-dir <thư mục>] font cho libass
 ```
+
+**Style phụ đề (`--subs-style`, JSON đè lên mặc định):** `font`, `size_pct`, `color`,
+`opacity`, `bold`, `italic`, `underline`, `uppercase`, `letter_spacing`,
+`border` (`none|outline|box`), `outline_width`, `outline_color`, `outline_opacity`,
+`shadow_depth`, `shadow_color`, `position`, `margin_pct`, `side_margin_pct`,
+`max_chars_per_line`. `uppercase` + `max_chars_per_line` áp cho **cả `.srt` rời**.
+
+Ba quirk của libass đã đo và bù sẵn (đồng bộ với `content-extractor/lib/subtitle-style.ts`):
+
+1. `outline_color` là màu **viền** ở `border=outline` nhưng là màu **nền hộp** ở `border=box`;
+   `shadow_color` luôn là màu bóng.
+2. Cỡ chữ chia **432** chứ không phải `PlayResY=288` — libass render nhỏ hơn 1,5 lần.
+3. `force_style` dùng hệ căn lề **SSA v4 cũ**: 2 = dưới-giữa, 6 = trên-giữa, 10 = giữa-giữa
+   (numpad V4+ 8/5 sẽ ra sai cả trục dọc lẫn căn lề ngang).
+
+Font tiếng Việt: trỏ `--subs-fonts-dir` (hoặc `SUBS_FONTS_DIR`) tới thư mục chứa TTF —
+ví dụ `content-extractor/public/fonts` của app Next. Không có thì libass lấy font hệ thống,
+và nhiều font caption phổ biến (Anton, Bebas Neue, Archivo Black) **thiếu dấu tiếng Việt**.
 
 **Auto-region (né bubble) v2.1:** sau `split_tall`, mỗi shot có thể được gán `region`
 heuristic. Manhwa dọc: **giữ full width**, chỉ cắt dọc cửa sổ ít bubble (tối đa ~22%

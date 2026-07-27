@@ -119,47 +119,108 @@ def duck_bgm(narration_track: str, bgm_path: str, volume: float, duck_db: float,
                  "-c:a", "pcm_s16le", out])
 
 
-def _ass_color(hex_color: str) -> str:
-    # #rrggbb → &H00BBGGRR (ASS, alpha 00 = đục) — ffmpeg.ts:229-236
+def _ass_color(hex_color: str, opacity: float = 1.0) -> str:
+    # #rrggbb + độ đục → &HAABBGGRR (ASS: AA=00 đục hoàn toàn, FF trong suốt)
+    # Bản TS tương ứng: lib/subtitle-style.ts → assColor()
+    alpha = format(round((1 - max(0.0, min(1.0, opacity))) * 255), "02x")
     m = re.match(r"^#?([0-9a-f]{6})$", hex_color.strip(), re.IGNORECASE)
     if not m:
-        return "&H00FFFFFF"
+        return f"&H{alpha}FFFFFF".upper()
     rr, gg, bb = m.group(1)[0:2], m.group(1)[2:4], m.group(1)[4:6]
-    return f"&H00{bb}{gg}{rr}".upper()
+    return f"&H{alpha}{bb}{gg}{rr}".upper()
 
 
 def _escape_filter_path(p: str) -> str:
     return str(Path(p).resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
 
+# Bản v2, khớp defaultRenderConfig() của schema.ts. Config cũ chỉ có "outline": bool vẫn nhận
+# được — _normalize_style() quy đổi sang "border" + "outline_width".
 SUBTITLE_STYLE_DEFAULTS = {
-    # defaultRenderConfig (schema.ts:278-286)
     "font": "Be Vietnam Pro",
     "size_pct": 4.5,
     "color": "#ffffff",
-    "outline": True,
+    "opacity": 1.0,
+    "bold": False,
+    "italic": False,
+    "underline": False,
+    "uppercase": False,
+    "letter_spacing": 0,
+    "border": "outline",          # none | outline | box
+    "outline_width": 2,
+    "outline_color": "#000000",
+    "outline_opacity": 1.0,
+    "shadow_depth": 0,
+    "shadow_color": "#000000",
     "position": "bottom",
     "margin_pct": 8,
+    "side_margin_pct": 6,
+    "max_chars_per_line": 0,
 }
+
+# ffmpeg chuyển .srt sang ASS với PlayResX=384 / PlayResY=288 — lề và viền/bóng tính theo
+# hai số này (lề ngang theo X, còn lại theo Y).
+PLAY_RES_X = 384
+PLAY_RES_Y = 288
+
+# Riêng CỠ CHỮ dùng số chia khác: đo thực tế (libass 0.17) cho thấy chữ render nhỏ hơn 1,5 lần
+# so với công thức PlayResY=288, nên phải chia 432 thì "x%" mới ra đúng x% chiều cao khung.
+# Đồng bộ với FONT_SIZE_DIVISOR trong lib/subtitle-style.ts.
+FONT_SIZE_DIVISOR = 432
+
+# CẢNH BÁO: libass parse force_style theo hệ căn lề SSA v4 CŨ, không phải numpad V4+:
+#   1 dưới-trái   2 dưới-GIỮA   3 dưới-phải
+#   5 trên-trái   6 trên-GIỮA   7 trên-phải
+#   9 giữa-trái  10 giữa-GIỮA  11 giữa-phải
+# Dùng numpad (top=8, middle=5) sẽ ra "giữa khung căn trái" / "trên căn trái".
+_ALIGNMENT = {"top": 6, "middle": 10, "bottom": 2}
+
+
+def _normalize_style(style: dict) -> dict:
+    """Đổ mặc định + quy đổi style v1 (outline: bool) sang v2."""
+    s = {**SUBTITLE_STYLE_DEFAULTS, **(style or {})}
+    if "outline" in (style or {}) and "border" not in (style or {}):
+        s["border"] = "outline" if style["outline"] else "none"
+        s["outline_width"] = 2 if style["outline"] else 0
+    return s
 
 
 def burn_subs(video: str, srt_path: str, style: dict, out: str, fonts_dir: str | None = None) -> None:
-    """Burn phụ đề theo style — libass canh theo PlayResY=288 (ffmpeg.ts:246-289)."""
+    """Burn phụ đề theo style — bản Python của lib/subtitle-style.ts + burnSubs().
+
+    Vai trò màu trong ASS (đã đo bằng libass, KHÔNG suy đoán):
+
+                     BorderStyle=1 (viền)   BorderStyle=3 (hộp)
+        OutlineColour  màu viền              MÀU HỘP
+        BackColour     màu bóng              màu bóng
+    """
     import os
 
-    play_res_y = 288
-    font_size = max(8, round((style["size_pct"] / 100) * play_res_y))
-    margin_v = round((style["margin_pct"] / 100) * play_res_y)
-    alignment = 8 if style["position"] == "top" else 5 if style["position"] == "middle" else 2
+    s = _normalize_style(style)
+    font_size = max(8, round((s["size_pct"] / 100) * FONT_SIZE_DIVISOR))
+    margin_v = round((s["margin_pct"] / 100) * PLAY_RES_Y)
+    margin_side = round((s["side_margin_pct"] / 100) * PLAY_RES_X)
+    alignment = _ALIGNMENT.get(s["position"], 2)
+    border_style = 3 if s["border"] == "box" else 1
+    outline = 0 if s["border"] == "none" else s["outline_width"]
     # Lọc ký tự phá cú pháp force_style (' : , \)
-    safe_font = re.sub(r"[^\w À-ỹ.-]", "", style["font"]).strip() or "Arial"
+    safe_font = re.sub(r"[^\w À-ỹ.-]", "", s["font"]).strip() or "Arial"
     force_style = ",".join([
         f"FontName={safe_font}",
         f"FontSize={font_size}",
-        f"PrimaryColour={_ass_color(style['color'])}",
-        f"Outline={1 if style['outline'] else 0}",
-        "BorderStyle=1",
+        f"PrimaryColour={_ass_color(s['color'], s['opacity'])}",
+        f"OutlineColour={_ass_color(s['outline_color'], s['outline_opacity'])}",
+        f"BackColour={_ass_color(s['shadow_color'], 1.0)}",
+        f"Bold={1 if s['bold'] else 0}",
+        f"Italic={1 if s['italic'] else 0}",
+        f"Underline={1 if s['underline'] else 0}",
+        f"Spacing={s['letter_spacing']}",
+        f"BorderStyle={border_style}",
+        f"Outline={outline}",
+        f"Shadow={s['shadow_depth']}",
         f"Alignment={alignment}",
+        f"MarginL={margin_side}",
+        f"MarginR={margin_side}",
         f"MarginV={margin_v}",
     ])
     d = fonts_dir or os.environ.get("SUBS_FONTS_DIR")

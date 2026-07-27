@@ -113,6 +113,18 @@ def main() -> None:
     parser.add_argument("--bgm-volume", type=float, default=0.3)
     parser.add_argument("--duck-db", type=float, default=-12)
     parser.add_argument("--subs", choices=["srt", "burn", "both"], default="both")
+    parser.add_argument(
+        "--subs-style",
+        default=None,
+        help='JSON style phụ đề, đè lên SUBTITLE_STYLE_DEFAULTS. Ví dụ: '
+             '\'{"font":"Kanit","bold":true,"uppercase":true,"border":"box",'
+             '"outline_color":"#000000","outline_opacity":0.6}\'',
+    )
+    parser.add_argument(
+        "--subs-fonts-dir",
+        default=None,
+        help="thư mục font cho libass (mặc định lấy SUBS_FONTS_DIR)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="in timeline + lệnh ffmpeg, không chạy")
     parser.add_argument(
         "--no-auto-region",
@@ -164,7 +176,20 @@ def main() -> None:
     }
 
     timeline = build_timeline(segments, seg_durations)
-    srt = to_srt(timeline, segments)
+    # Style phụ đề: mặc định + đè bằng --subs-style. Dùng cho CẢ .srt (uppercase/ngắt dòng)
+    # lẫn burn-in để hai đầu ra không lệch nhau.
+    subs_style = dict(SUBTITLE_STYLE_DEFAULTS)
+    if args.subs_style:
+        try:
+            override = json.loads(args.subs_style)
+        except json.JSONDecodeError as e:
+            fail("subs-style-invalid", f"--subs-style không phải JSON hợp lệ: {e}")
+            return
+        if not isinstance(override, dict):
+            fail("subs-style-invalid", "--subs-style phải là object JSON")
+            return
+        subs_style.update(override)
+    srt = to_srt(timeline, segments, subs_style)
 
     odir = out_dir(args.workdir)
     odir.mkdir(parents=True, exist_ok=True)
@@ -243,12 +268,16 @@ def main() -> None:
         if args.subs in ("burn", "both"):
             if has_filter("subtitles"):
                 burned_path = str(shots_dir / "burned.mp4")
-                burn_subs(silent_path, str(srt_path), SUBTITLE_STYLE_DEFAULTS, burned_path)
+                burn_subs(silent_path, str(srt_path), subs_style, burned_path, args.subs_fonts_dir)
                 video_path = burned_path
                 print("[render] phụ đề đã burn-in")
             else:
+                # Nhiều build ffmpeg (vd bottle brew hiện tại) không kèm libass. Bản web
+                # content-extractor tự rơi xuống ffmpeg-static; skill này không có
+                # node_modules nên chỉ báo cách xử lý.
                 print("[render] CẢNH BÁO: ffmpeg thiếu filter subtitles (libass) — bỏ qua burn-in, "
-                      "dùng .srt rời. Cài bản đầy đủ: brew install ffmpeg.", file=sys.stderr)
+                      "dùng .srt rời. Cài bản có libass, hoặc trỏ PATH tới bản ffmpeg khác "
+                      "(kiểm bằng: ffmpeg -filters | grep subtitles).", file=sys.stderr)
 
         final_path = odir / "video.mp4"
         mux(video_path, audio_path, str(final_path))

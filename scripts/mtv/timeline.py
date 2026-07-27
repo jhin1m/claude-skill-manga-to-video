@@ -129,8 +129,45 @@ def allocate_captions(sentences: list[str], start_sec: float, end_sec: float) ->
     return out
 
 
-def to_srt(timeline: dict, segments: list[dict]) -> str:
-    """Caption tách theo CÂU trong từng segment — mọi caption nằm gọn trong segment."""
+def wrap_caption(text: str, max_chars: int) -> str:
+    """Ngắt dòng thủ công theo số ký tự tối đa (lib/timeline.ts → wrapCaption).
+
+    max_chars <= 0 = tắt. Ngắt ở khoảng trắng; từ dài hơn giới hạn thì để tràn.
+    """
+    if max_chars <= 0:
+        return text
+    out_paragraphs = []
+    for paragraph in text.split("\n"):
+        lines: list[str] = []
+        current = ""
+        for word in paragraph.split():
+            if not current:
+                current = word
+            elif len(current) + 1 + len(word) <= max_chars:
+                current += " " + word
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        out_paragraphs.append("\n".join(lines))
+    return "\n".join(out_paragraphs)
+
+
+def format_caption(text: str, style: dict | None = None) -> str:
+    """IN HOA (tuỳ chọn) rồi ngắt dòng — dùng chung cho .srt và burn-in."""
+    if not style:
+        return text
+    shown = text.upper() if style.get("uppercase") else text
+    return wrap_caption(shown, int(style.get("max_chars_per_line", 0) or 0))
+
+
+def to_srt(timeline: dict, segments: list[dict], style: dict | None = None) -> str:
+    """Caption tách theo CÂU trong từng segment — mọi caption nằm gọn trong segment.
+
+    style (tuỳ chọn) áp uppercase + ngắt dòng; SRT cho phép cue nhiều dòng nên SỐ CUE
+    không đổi. Không truyền style = hành vi y như trước.
+    """
     by_id = {s["id"]: s for s in segments}
     blocks = []
     index = 1
@@ -139,7 +176,8 @@ def to_srt(timeline: dict, segments: list[dict]) -> str:
         if not seg or not seg["narration"].strip():
             continue
         for cap in allocate_captions(split_sentences(seg["narration"]), tseg["start"], tseg["end"]):
-            blocks.append(f"{index}\n{srt_time(cap['start'])} --> {srt_time(cap['end'])}\n{cap['text']}\n")
+            text = format_caption(cap["text"], style)
+            blocks.append(f"{index}\n{srt_time(cap['start'])} --> {srt_time(cap['end'])}\n{text}\n")
             index += 1
     return "\n".join(blocks)
 
