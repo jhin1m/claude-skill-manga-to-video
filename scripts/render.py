@@ -8,7 +8,7 @@
 #
 # CLI: render.py --workdir W --aspect 9:16|16:9|1:1 [--fps 30] [--zoom 1.12] [--bgm FILE]
 #                [--bgm-volume 0.3] [--duck-db -12] [--subs srt|burn|both] [--dry-run]
-#                [--no-auto-region]
+#                [--no-auto-region] [--subs-preset ID] [--subs-style JSON] [--subs-fonts-dir D]
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mtv.ffmpeg_cmd import (
-    SUBTITLE_STYLE_DEFAULTS,
     build_audio_track,
     burn_subs,
     concat_video,
@@ -36,6 +35,7 @@ from mtv.ffmpeg_cmd import (
     run_command,
 )
 from mtv.auto_region import auto_region_within
+from mtv.subtitle_style import preset_ids, resolve_subtitle_style, warn_font
 from mtv.kenburns import kenburns
 from mtv.shot_split import split_tall_shots
 from mtv.smart_split import to_gray
@@ -114,9 +114,15 @@ def main() -> None:
     parser.add_argument("--duck-db", type=float, default=-12)
     parser.add_argument("--subs", choices=["srt", "burn", "both"], default="both")
     parser.add_argument(
+        "--subs-preset",
+        default=None,
+        choices=preset_ids() or None,
+        help="preset style phụ đề dựng sẵn, khớp từng field với bản web",
+    )
+    parser.add_argument(
         "--subs-style",
         default=None,
-        help='JSON style phụ đề, đè lên SUBTITLE_STYLE_DEFAULTS. Ví dụ: '
+        help='JSON style phụ đề, đè lên preset (hoặc lên mặc định nếu không có preset). Ví dụ: '
              '\'{"font":"Kanit","bold":true,"uppercase":true,"border":"box",'
              '"outline_color":"#000000","outline_opacity":0.6}\'',
     )
@@ -132,6 +138,14 @@ def main() -> None:
         help="tắt auto-crop né bubble (mặc định BẬT)",
     )
     args = parser.parse_args()
+
+    # Preset kiểm NGAY: thiếu schemas/parity.json thì argparse không có `choices` để chặn, mà
+    # để lỗi rơi xuống sau split_tall + auto-region là đốt vài phút nạp slice vô ích.
+    if args.subs_preset:
+        try:
+            resolve_subtitle_style(args.subs_preset)
+        except (FileNotFoundError, KeyError) as e:
+            fail("subs-preset-invalid", str(e))
 
     # validate script trước khi render
     validate = Path(__file__).resolve().parent / "validate.py"
@@ -176,9 +190,9 @@ def main() -> None:
     }
 
     timeline = build_timeline(segments, seg_durations)
-    # Style phụ đề: mặc định + đè bằng --subs-style. Dùng cho CẢ .srt (uppercase/ngắt dòng)
-    # lẫn burn-in để hai đầu ra không lệch nhau.
-    subs_style = dict(SUBTITLE_STYLE_DEFAULTS)
+    # Style phụ đề: mặc định ◀ preset ◀ --subs-style, mọi giá trị đi qua clamp. Dùng cho CẢ
+    # .srt (uppercase/ngắt dòng) lẫn burn-in để hai đầu ra không lệch nhau.
+    override = {}
     if args.subs_style:
         try:
             override = json.loads(args.subs_style)
@@ -188,7 +202,12 @@ def main() -> None:
         if not isinstance(override, dict):
             fail("subs-style-invalid", "--subs-style phải là object JSON")
             return
-        subs_style.update(override)
+    try:
+        subs_style = resolve_subtitle_style(args.subs_preset, override)
+    except (FileNotFoundError, KeyError) as e:
+        fail("subs-preset-invalid", str(e))
+        return
+    warn_font(subs_style)
     srt = to_srt(timeline, segments, subs_style)
 
     odir = out_dir(args.workdir)
