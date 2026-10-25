@@ -187,6 +187,10 @@ Cache theo segment — chạy lại không tốn call. Lỗi `ret=-6` (shark blo
 ```bash
 $PY $SCRIPTS/render.py --workdir <W> --aspect 9:16 --subs both
 # 9:16|16:9|1:1; [--fps 30] [--zoom 1.12] [--bgm file.mp3 --bgm-volume 0.3 --duck-db -12]
+# --subs srt|burn|both|none — none = tắt hẳn phụ đề (không burn, không xuất .srt)
+# [--motion static|auto] mặc định static (đứng yên); auto = lia/zoom tự suy, dùng --zoom
+# [--fill cover|blur] shot lệch khung: cover = full màn hình, cắt mép; blur = vừa khung trên
+#   nền blur. Mặc định cover với 9:16, blur với 16:9/1:1
 # [--no-auto-region] tắt auto-crop né bubble (mặc định BẬT); --dry-run xem lệnh
 # [--subs-preset clean|boxed|punchy|classic|news] preset dựng sẵn, khớp bản web
 # [--subs-style '<json>'] style phụ đề; [--subs-fonts-dir <thư mục>] font cho libass

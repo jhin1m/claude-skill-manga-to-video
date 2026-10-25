@@ -28,7 +28,7 @@ Quy tắc:
 ## script.json (orchestrator ghi, cả chương)
 
 Rút gọn từ `ScriptSegment` (`schema.ts:188-196`) — shots mặc định full-slice, region null,
-motion auto (v1 không cho agent chỉ định region/motion).
+motion theo cờ `render.py --motion` (v1 không cho agent chỉ định region/motion).
 
 ```json
 {

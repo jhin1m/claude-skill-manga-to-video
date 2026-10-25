@@ -4,10 +4,12 @@
 # → render từng shot (Ken Burns) → concat → audio track (adelay theo start+padHead) →
 # BGM duck → burn subs → mux → out/video.mp4.
 # Hợp đồng skill: shots full-slice → split_tall → auto-region né bubble (tắt bằng --no-auto-region).
-# motion auto; agent không chỉ định region trong script.json.
+# Hiệu ứng toàn cục qua --motion (mặc định static); agent không chỉ định region/motion trong
+# script.json.
 #
 # CLI: render.py --workdir W --aspect 9:16|16:9|1:1 [--fps 30] [--zoom 1.12] [--bgm FILE]
-#                [--bgm-volume 0.3] [--duck-db -12] [--subs srt|burn|both] [--dry-run]
+#                [--bgm-volume 0.3] [--duck-db -12] [--subs srt|burn|both|none] [--dry-run]
+#                [--motion static|auto] [--fill cover|blur]
 #                [--no-auto-region] [--subs-preset ID] [--subs-style JSON] [--subs-fonts-dir D]
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from mtv.ffmpeg_cmd import (
 )
 from mtv.auto_region import auto_region_within
 from mtv.subtitle_style import preset_ids, resolve_subtitle_style, warn_font
-from mtv.kenburns import kenburns
+from mtv.kenburns import default_fill, kenburns, resolve_shot_motion
 from mtv.shot_split import split_tall_shots
 from mtv.smart_split import to_gray
 from mtv.schema_defs import (
@@ -112,7 +114,25 @@ def main() -> None:
     parser.add_argument("--bgm", type=Path, default=None)
     parser.add_argument("--bgm-volume", type=float, default=0.3)
     parser.add_argument("--duck-db", type=float, default=-12)
-    parser.add_argument("--subs", choices=["srt", "burn", "both"], default="both")
+    parser.add_argument(
+        "--subs",
+        choices=["srt", "burn", "both", "none"],
+        default="both",
+        help="srt = chỉ file .srt rời · burn/both = cháy chữ vào video · none = tắt hẳn phụ đề",
+    )
+    parser.add_argument(
+        "--motion",
+        choices=["static", "auto"],
+        default="static",
+        help="static = mọi shot đứng yên (mặc định) · auto = lia/zoom tự suy theo hình dáng shot",
+    )
+    parser.add_argument(
+        "--fill",
+        choices=["cover", "blur"],
+        default=None,
+        help="shot lệch tỉ lệ khung: cover = full màn hình, cắt mép · blur = vừa khung trên nền "
+             "blur. Mặc định: cover với 9:16, blur với khung khác",
+    )
     parser.add_argument(
         "--subs-preset",
         default=None,
@@ -164,14 +184,15 @@ def main() -> None:
         fail("audio-manifest-missing", "chưa có audio-manifest.json — chạy tts.py trước")
     audio_manifest = load_json(amanifest_path)
 
-    # ScriptSegment nội bộ: shots full-slice (region null, motion auto, weight 1)
+    # ScriptSegment nội bộ: shots full-slice (region null, motion theo --motion, weight 1)
     segments = [
         {
             "id": seg["id"],
             "order": seg["order"],
             "narration": seg["narration"],
             "shots": [
-                {"source_index": idx, "region": None, "motion": None, "weight": 1}
+                {"source_index": idx, "region": None,
+                 "motion": resolve_shot_motion(None, args.motion), "weight": 1}
                 for idx in seg["shot_indices"]
             ],
         }
@@ -207,17 +228,21 @@ def main() -> None:
     except (FileNotFoundError, KeyError) as e:
         fail("subs-preset-invalid", str(e))
         return
-    warn_font(subs_style)
-    srt = to_srt(timeline, segments, subs_style)
-
+    if args.subs != "none":
+        warn_font(subs_style)
     odir = out_dir(args.workdir)
     odir.mkdir(parents=True, exist_ok=True)
     srt_path = odir / "video.srt"
-    srt_path.write_text(srt, encoding="utf-8")
+    if args.subs == "none":
+        # Tắt hẳn phụ đề: dọn .srt của lần render trước để out/ không còn phụ đề lệch video
+        srt_path.unlink(missing_ok=True)
+    else:
+        srt_path.write_text(to_srt(timeline, segments, subs_style), encoding="utf-8")
     (odir / "timeline.json").write_text(
         json.dumps(to_timeline_json(timeline, segments), ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"[render] timeline {timeline['total_sec']:.2f}s → {odir}/timeline.json, video.srt")
+    srt_note = "" if args.subs == "none" else ", video.srt"
+    print(f"[render] timeline {timeline['total_sec']:.2f}s → {odir}/timeline.json{srt_note}")
 
     # Chuẩn bị lệnh render từng shot. Temp dir namespace theo aspect+pid — hai render song
     # song trên cùng workdir không giẫm shot của nhau (mẫu render-video.mts workDir riêng)
@@ -225,6 +250,8 @@ def main() -> None:
     shots_dir = odir / f".shots-{args.aspect.replace(':', 'x')}-{os.getpid()}"
     shot_cmds: list[list[str]] = []
     shot_files: list[str] = []
+    fill = args.fill or default_fill(args.aspect)
+    print(f"[render] hiệu ứng {args.motion}, lấp khung {fill}")
     for si, tseg in enumerate(timeline["segments"]):
         for shot_idx, shot in enumerate(tseg["shots"]):
             s = slices[shot["source_index"]]
@@ -233,6 +260,7 @@ def main() -> None:
                 "img_w": s["w"], "img_h": s["h"], "region": shot["region"],
                 "motion": shot["motion"], "aspect": args.aspect,
                 "duration_sec": duration_sec, "fps": args.fps, "zoom": args.zoom,
+                "fill": fill,
             })
             out_file = str(shots_dir / f"shot-{si:03d}-{shot_idx}.mp4")
             shot_cmds.append(render_shot_cmd(
@@ -282,7 +310,7 @@ def main() -> None:
             audio_path = mixed_path
             print(f"[render] BGM duck ({args.duck_db}dB, volume {args.bgm_volume})")
 
-        # .srt rời LUÔN được giữ (kể cả mode burn) — hợp đồng "luôn xuất .srt"
+        # .srt rời được giữ ở mọi mode trừ none (kể cả mode burn)
         video_path = silent_path
         if args.subs in ("burn", "both"):
             if has_filter("subtitles"):

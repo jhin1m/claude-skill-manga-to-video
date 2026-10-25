@@ -41,6 +41,18 @@ FRAME_SIZES = {
 }
 
 
+def default_fill(aspect: str) -> str:
+    """9:16 lấp kín ('cover'), khung ngang/vuông nền blur — kenburns.ts defaultFill."""
+    return "cover" if aspect == "9:16" else "blur"
+
+
+def resolve_shot_motion(motion: dict | None, default_motion: str) -> dict | None:
+    """Ghi đè per-shot luôn thắng; shot auto nhận hiệu ứng mặc định (kenburns.ts resolveShotMotion)."""
+    if motion is not None and motion.get("mode") != "auto":
+        return motion
+    return {"mode": "static"} if default_motion == "static" else None
+
+
 def frame_size(aspect: str) -> tuple[int, int]:
     if aspect not in FRAME_SIZES:
         raise ValueError(f"Aspect không hỗ trợ: {aspect} (9:16|16:9|1:1)")
@@ -69,7 +81,10 @@ def _pan_h_plan(r: dict, W: int, H: int, duration_sec: float, reverse: bool = Fa
 
 
 def plan_kenburns(input: dict) -> dict:
-    """input: {img_w, img_h, region|None, aspect, duration_sec, fps, zoom, motion|None}."""
+    """input: {img_w, img_h, region|None, aspect, duration_sec, fps, zoom, motion|None, fill?}.
+
+    fill: 'blur' (mặc định, hành vi cũ) | 'cover' (lấp kín khung, không nền blur).
+    """
     W, H = frame_size(input["aspect"])
     r = input.get("region") or {"x": 0, "y": 0, "w": input["img_w"], "h": input["img_h"]}
     tallness = r["h"] / r["w"]
@@ -78,6 +93,12 @@ def plan_kenburns(input: dict) -> dict:
     cover_v = tallness * frame_ratio
     cover_h = wideness / frame_ratio
     aspect_mismatch = abs(wideness - frame_ratio) / frame_ratio > 0.02
+    # fill 'cover': lấp kín khung + crop giữa thay cho nền blur. cover_fill chỉ có mặt khi
+    # True để plan của fill 'blur' giữ nguyên hình dạng cũ.
+    cover = input.get("fill") == "cover"
+    fill_plan = {"blur_fill": aspect_mismatch and not cover}
+    if aspect_mismatch and cover:
+        fill_plan["cover_fill"] = True
 
     # ==== Ghi đè per-shot (mode ≠ auto) — kenburns.ts:115-140 ====
     motion = input.get("motion")
@@ -89,9 +110,9 @@ def plan_kenburns(input: dict) -> dict:
         if forced["mode"] == "pan-h" and cover_h >= PAN_MIN_COVER:
             return _pan_h_plan(r, W, H, input["duration_sec"], reverse)
         if forced["mode"] == "zoom":
-            return {"mode": "zoom", "blur_fill": aspect_mismatch, "reverse": reverse}
+            return {"mode": "zoom", **fill_plan, "reverse": reverse}
         if forced["mode"] == "static":
-            return {"mode": "static", "blur_fill": aspect_mismatch, "reverse": False}
+            return {"mode": "static", **fill_plan, "reverse": False}
         # Ép pan nhưng vùng không đủ phần dư → rơi về auto phía dưới (an toàn)
 
     # ==== auto: suy từ hình dáng region — kenburns.ts:150-160 ====
@@ -100,7 +121,7 @@ def plan_kenburns(input: dict) -> dict:
         return _pan_v_plan(r, W, H, input["duration_sec"])
     if wideness >= STRIP_SHAPE and PAN_MIN_COVER <= cover_h <= max_cover:
         return _pan_h_plan(r, W, H, input["duration_sec"])
-    return {"mode": "zoom", "blur_fill": aspect_mismatch, "reverse": False}
+    return {"mode": "zoom", **fill_plan, "reverse": False}
 
 
 def kenburns(input: dict) -> str:
@@ -114,6 +135,13 @@ def kenburns(input: dict) -> str:
     frac = f"(1-t/{dur:.3f})" if plan.get("reverse") else f"(t/{dur:.3f})"
 
     S = SUPERSAMPLE
+
+    def fit_to(w: int, h: int) -> str:
+        # cover phóng phủ kín rồi crop giữa; còn lại scale thẳng (lệch ≤2%)
+        if plan.get("cover_fill"):
+            return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+        return f"scale={w}:{h}"
+
     if plan["mode"] == "pan-v":
         scaled = even((r["h"] * W) / r["w"])
         sp = _pan_supersample(W, scaled)
@@ -133,7 +161,7 @@ def kenburns(input: dict) -> str:
     if plan["mode"] == "static":
         # static BỎ HẲN zoompan (z=1 qua toFixed vẫn có thể thành micro-zoom)
         if not plan["blur_fill"]:
-            return f"[0:v]{crop_reg},scale={W}:{H},setsar=1[v]"
+            return f"[0:v]{crop_reg},{fit_to(W, H)},setsar=1[v]"
         fit_scale = min(W / r["w"], H / r["h"])
         fw = even(r["w"] * fit_scale)
         fh = even(r["h"] * fit_scale)
@@ -156,7 +184,7 @@ def kenburns(input: dict) -> str:
 
     if not plan["blur_fill"]:
         return (
-            f"[0:v]{crop_reg},scale={W * S}:{H * S},"
+            f"[0:v]{crop_reg},{fit_to(W * S, H * S)},"
             f"zoompan=z={z_expr}:{zoom_center}:d=1:s={W}x{H},tmix=frames=2,setsar=1[v]"
         )
 
